@@ -1,0 +1,457 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ShelfRelay processing backend: S3 catalogue storage, Textract extraction,
+  Bedrock-assisted matching, PostgreSQL (Aurora Serverless v2), Lambda
+  processing and HubSpot CRM sync. Build handlers first: `npm --prefix services run build`.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+  BedrockModelId:
+    Type: String
+    Description: Bedrock model or inference profile ID used for match review (leave empty to disable).
+    Default: ""
+  WebAppOrigin:
+    Type: String
+    Description: Origin allowed to upload catalogues via presigned URLs (e.g. https://app.shelfrelay.com).
+  HubSpotSecretArn:
+    Type: String
+    Description: Secrets Manager ARN holding {"accessToken":"..."} for the HubSpot private app.
+  HubSpotDemoPipelineId:
+    Type: String
+    Default: ""
+  HubSpotDemoStageRequested:
+    Type: String
+    Default: ""
+
+Conditions:
+  HasBedrock: !Not [!Equals [!Ref BedrockModelId, ""]]
+  IsProd: !Equals [!Ref Stage, prod]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 512
+    Timeout: 60
+    Tracing: Active
+    VpcConfig:
+      SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+    Environment:
+      Variables:
+        DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+        EVENT_BUS_NAME: !Ref EventBus
+        NODE_OPTIONS: --enable-source-maps
+
+Resources:
+  # ------------------------------------------------------------------ network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.40.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{ Key: Name, Value: !Sub "shelfrelay-${Stage}" }]
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  RouteAssocA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRouteTable }
+  RouteAssocB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRouteTable }
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ShelfRelay Lambda functions
+      VpcId: !Ref Vpc
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ShelfRelay PostgreSQL
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC interface endpoints
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+  # Egress: a NAT gateway for HubSpot (api.hubapi.com); AWS API traffic stays
+  # on private endpoints.
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.100.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Vpc, InternetGatewayId: !Ref InternetGateway }
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties: { RouteTableId: !Ref PublicRouteTable, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref InternetGateway }
+  PublicRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnet, RouteTableId: !Ref PublicRouteTable }
+  NatEip:
+    Type: AWS::EC2::EIP
+    Properties: { Domain: vpc }
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties: { SubnetId: !Ref PublicSubnet, AllocationId: !GetAtt NatEip.AllocationId }
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties: { RouteTableId: !Ref PrivateRouteTable, DestinationCidrBlock: 0.0.0.0/0, NatGatewayId: !Ref NatGateway }
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PrivateRouteTable]
+  TextractEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.textract
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+  BedrockEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.bedrock-runtime
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+  SecretsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.secretsmanager
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+  EventsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.events
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+
+  # ------------------------------------------------------------------ storage
+  CatalogueKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: ShelfRelay catalogue encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdmin
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: kms:*
+            Resource: "*"
+
+  CatalogueBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "shelfrelay-catalogues-${Stage}-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref CatalogueKey }
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration: { Status: Enabled }
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins: [!Ref WebAppOrigin]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration: { NoncurrentDays: 365 }
+
+  CatalogueBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CatalogueBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource: [!GetAtt CatalogueBucket.Arn, !Sub "${CatalogueBucket.Arn}/*"]
+            Condition: { Bool: { aws:SecureTransport: "false" } }
+
+  # ------------------------------------------------------------------ database
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: ShelfRelay database subnets
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+
+  Database:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: aurora-postgresql
+      EngineVersion: "16.6"
+      DatabaseName: shelfrelay
+      MasterUsername: shelfrelay_admin
+      ManageMasterUserPassword: true
+      StorageEncrypted: true
+      DeletionProtection: !If [IsProd, true, false]
+      BackupRetentionPeriod: !If [IsProd, 14, 3]
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VpcSecurityGroupIds: [!Ref DatabaseSecurityGroup]
+      ServerlessV2ScalingConfiguration: { MinCapacity: 0.5, MaxCapacity: 8 }
+      EnableIAMDatabaseAuthentication: true
+
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref Database
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+
+  # ------------------------------------------------------------------ events
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub "shelfrelay-${Stage}"
+
+  TextractTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      # Carries only job IDs and status, no catalogue content.
+      TopicName: !Sub "AmazonTextract-shelfrelay-${Stage}"
+
+  TextractPublishRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: textract.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: publish
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref TextractTopic
+
+  ProcessingDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  ProcessingDLQPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref ProcessingDLQ]
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sqs:SendMessage
+            Resource: !GetAtt ProcessingDLQ.Arn
+
+  # ------------------------------------------------------------------ functions
+  CatalogueIngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "shelfrelay-${Stage}-catalogue-ingest"
+      CodeUri: ../services/dist/catalogue-ingest
+      Handler: index.handler
+      DeadLetterQueue: { Type: SQS, TargetArn: !GetAtt ProcessingDLQ.Arn }
+      Environment:
+        Variables:
+          TEXTRACT_TOPIC_ARN: !Ref TextractTopic
+          TEXTRACT_ROLE_ARN: !GetAtt TextractPublishRole.Arn
+      Policies:
+        - S3ReadPolicy: { BucketName: !Sub "shelfrelay-catalogues-${Stage}-${AWS::AccountId}" }
+        - KMSDecryptPolicy: { KeyId: !Ref CatalogueKey }
+        - EventBridgePutEventsPolicy: { EventBusName: !Ref EventBus }
+        - Statement:
+            - Effect: Allow
+              Action: [textract:StartDocumentAnalysis]
+              Resource: "*"
+            - Effect: Allow
+              Action: iam:PassRole
+              Resource: !GetAtt TextractPublishRole.Arn
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !GetAtt Database.MasterUserSecret.SecretArn
+      Events:
+        Upload:
+          Type: S3
+          Properties:
+            Bucket: !Ref CatalogueBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules: [{ Name: prefix, Value: org/ }]
+
+  TextractCompleteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "shelfrelay-${Stage}-textract-complete"
+      CodeUri: ../services/dist/textract-complete
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 1024
+      DeadLetterQueue: { Type: SQS, TargetArn: !GetAtt ProcessingDLQ.Arn }
+      Policies:
+        - EventBridgePutEventsPolicy: { EventBusName: !Ref EventBus }
+        - Statement:
+            - Effect: Allow
+              Action: [textract:GetDocumentAnalysis]
+              Resource: "*"
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !GetAtt Database.MasterUserSecret.SecretArn
+      Events:
+        Done:
+          Type: SNS
+          Properties: { Topic: !Ref TextractTopic }
+
+  MatchAssistFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "shelfrelay-${Stage}-match-assist"
+      CodeUri: ../services/dist/match-assist
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !GetAtt Database.MasterUserSecret.SecretArn
+            - !If
+              - HasBedrock
+              - Effect: Allow
+                Action: [bedrock:InvokeModel]
+                Resource: "*"
+              - !Ref AWS::NoValue
+      Events:
+        Imported:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !Ref EventBus
+            Pattern:
+              source: [shelfrelay.catalogues]
+              detail-type: [catalogue.imported]
+            RetryPolicy: { MaximumRetryAttempts: 4 }
+            DeadLetterConfig: { Arn: !GetAtt ProcessingDLQ.Arn }
+
+  # Reaches api.hubapi.com through the NAT gateway and logs every sync to crm_sync_events.
+  HubSpotSyncFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "shelfrelay-${Stage}-hubspot-sync"
+      CodeUri: ../services/dist/hubspot-sync
+      Handler: index.handler
+      Timeout: 30
+      ReservedConcurrentExecutions: 5
+      Environment:
+        Variables:
+          HUBSPOT_SECRET_ARN: !Ref HubSpotSecretArn
+          HS_DEMO_PIPELINE_ID: !Ref HubSpotDemoPipelineId
+          HS_DEMO_STAGE_REQUESTED: !Ref HubSpotDemoStageRequested
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: [!Ref HubSpotSecretArn, !GetAtt Database.MasterUserSecret.SecretArn]
+      Events:
+        CrmEvents:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !Ref EventBus
+            Pattern:
+              detail-type: [demo.requested, account.onboarding_stage_changed, catalogue.imported, purchase_order.sent]
+            RetryPolicy: { MaximumRetryAttempts: 8 }
+            DeadLetterConfig: { Arn: !GetAtt ProcessingDLQ.Arn }
+
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: ShelfRelay processing events are failing
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt ProcessingDLQ.QueueName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+
+Outputs:
+  CatalogueBucketName:
+    Value: !Ref CatalogueBucket
+  EventBusName:
+    Value: !Ref EventBus
+  DatabaseEndpoint:
+    Value: !GetAtt Database.Endpoint.Address
+  DatabaseSecretArn:
+    Value: !GetAtt Database.MasterUserSecret.SecretArn

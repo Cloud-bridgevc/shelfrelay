@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-face), ui-monospace, SFMono-Regular, monospace;
+
+  --color-navy-950: #06111f;
+  --color-navy-900: #0b1f3a;
+  --color-navy-800: #12294a;
+  --color-navy-700: #1b3a63;
+  --color-navy-600: #2a4d7c;
+  --color-navy-100: #e3e9f2;
+  --color-navy-50: #f2f5f9;
+
+  --color-accent-700: #175c40;
+  --color-accent-600: #1d7550;
+  --color-accent-500: #25915f;
+  --color-accent-100: #dcefe5;
+  --color-accent-50: #eef7f2;
+
+  --color-ai-700: #4a4f9c;
+  --color-ai-50: #f1f1fa;
+  --color-est-700: #8a5a12;
+  --color-est-50: #fbf5ea;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: #ffffff;
+  color: var(--color-slate-800);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: var(--color-accent-100);
+}
+
+/* Focus ring used across interactive elements. */
+.focus-ring:focus-visible,
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-accent-500);
+  outline-offset: 2px;
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+}

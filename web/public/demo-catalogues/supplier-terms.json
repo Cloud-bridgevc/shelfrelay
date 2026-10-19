@@ -1,0 +1,67 @@
+{
+  "_notice": "FICTIONAL DEMO DATA. These suppliers, products, prices and terms are invented for demonstration and do not describe any real business.",
+  "currency": "USD",
+  "suppliers": [
+    {
+      "id": "northgate",
+      "name": "Northgate Provisions",
+      "kind": "wholesaler",
+      "region": "Mid-Atlantic (fictional)",
+      "catalogue": "northgate-provisions.csv",
+      "terms": {
+        "deliveryFee": 35,
+        "freeDeliveryThreshold": 600,
+        "minimumOrderValue": 250,
+        "volumeDiscounts": [],
+        "statedLeadTime": "Next business day for orders placed before 2pm",
+        "paymentTerms": "Net 30"
+      }
+    },
+    {
+      "id": "harbor",
+      "name": "Harbor & Vine Distribution",
+      "kind": "distributor",
+      "region": "Coastal metro (fictional)",
+      "catalogue": "harbor-vine-distribution.tsv",
+      "terms": {
+        "deliveryFee": 0,
+        "freeDeliveryThreshold": null,
+        "minimumOrderValue": 400,
+        "volumeDiscounts": [{ "minSubtotal": 1000, "percent": 3 }],
+        "statedLeadTime": "2–3 business days",
+        "paymentTerms": "Net 14"
+      }
+    },
+    {
+      "id": "meridian",
+      "name": "Meridian Cash & Carry",
+      "kind": "cash_and_carry",
+      "region": "Regional depot (fictional)",
+      "catalogue": "meridian-cash-carry.csv",
+      "catalogueOptions": { "priceBasis": "case" },
+      "terms": {
+        "deliveryFee": 60,
+        "freeDeliveryThreshold": null,
+        "minimumOrderValue": 0,
+        "volumeDiscounts": [],
+        "statedLeadTime": "Same-day collection; delivery within 2 business days",
+        "paymentTerms": "Payment on collection or delivery"
+      }
+    },
+    {
+      "id": "fieldstone",
+      "name": "Fieldstone Direct",
+      "kind": "direct",
+      "region": "Producer direct (fictional)",
+      "catalogue": "fieldstone-direct.csv",
+      "terms": {
+        "deliveryFee": null,
+        "freeDeliveryThreshold": null,
+        "minimumOrderValue": null,
+        "volumeDiscounts": [],
+        "statedLeadTime": null,
+        "paymentTerms": null
+      }
+    }
+  ]
+}
