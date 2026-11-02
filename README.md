@@ -73,3 +73,15 @@ Then apply `db/schema.sql` to the Aurora cluster. The template creates a NAT gat
 - Presigned-upload API that writes `catalogue_documents` rows and S3 objects (the ingest Lambda expects that key layout).
 - `HS_STAGE_*` onboarding stage IDs are read from the hubspot-sync environment but not yet template parameters.
 - Sending POs by email; the app records that an order was sent and exports CSV.
+
+## Launch readiness (glow-up)
+
+- Home page (`web/`): problem section with three sourced statistics, what-we-solve, comparison table, AI section, team (founder cards), roadmap and FAQ, with scroll-reveal motion that respects reduced motion. Sections live in `web/src/components/Glow.tsx` (generated markup), styles in `web/src/app/glow.css`, motion in `web/public/glow.js`.
+- New routes: `/privacy`, `/terms` (review drafts); new `sitemap.ts` and `robots.ts`; `metadataBase` set to shelfrelay.site. Footer credits the founders.
+- Ship assets: `opengraph-image.png`, `twitter-image.png`, `apple-icon.png`, `public/manifest.webmanifest`, icons, founders JSON-LD.
+
+### Content to confirm before launch
+- **Founders are placeholders:** Tolu Fashola (Founder/CEO) and Emeka Nwosu (Co-founder/CTO) — replace in `web/src/components/Glow.tsx`, the footer in `web/src/app/(site)/layout.tsx` and the JSON-LD in `web/src/app/layout.tsx`.
+- Contact email `hello@shelfrelay.site` is a placeholder — create the forward or replace it.
+- Statistics (National Grocers Association economic impact study) — re-check figures and links.
+- Privacy notice and terms need operator details and governing law.

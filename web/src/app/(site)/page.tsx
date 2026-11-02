@@ -3,6 +3,7 @@ import { loadDemoDataset } from "@/lib/demo/load";
 import { describePack, quoteLine } from "@/lib/engine";
 import { money } from "@/lib/format";
 import { Badge, ButtonLink, Card, ProvenanceBadge, ProvenanceLegend } from "@/components/ui";
+import { GlowTop, GlowMid, GlowEnd } from "@/components/Glow";
 
 const FEATURES = [
   {
@@ -122,6 +123,8 @@ export default async function HomePage() {
         </div>
       </section>
 
+      <GlowTop />
+
       <section id="platform" className="scroll-mt-20 bg-white">
         <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6">
           <div className="max-w-2xl">
@@ -171,6 +174,8 @@ export default async function HomePage() {
           </ol>
         </div>
       </section>
+
+      <GlowMid />
 
       <section id="trust" className="scroll-mt-20 bg-white">
         <div className="mx-auto grid max-w-7xl gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2">
@@ -244,6 +249,8 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
+
+      <GlowEnd />
 
       <section className="bg-navy-900">
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-4 py-16 sm:px-6 md:flex-row md:items-center">

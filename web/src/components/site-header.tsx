@@ -7,11 +7,13 @@ import { ButtonLink, Logo } from "./ui";
 import { cn } from "@/lib/format";
 
 const NAV = [
+  { href: "/#problem", label: "Problem" },
   { href: "/#platform", label: "Platform" },
   { href: "/retailers", label: "Retailers" },
   { href: "/wholesalers", label: "Wholesalers" },
   { href: "/compare", label: "Live comparison" },
   { href: "/pricing", label: "Pricing" },
+  { href: "/#team", label: "Team" },
 ];
 
 export function SiteHeader() {

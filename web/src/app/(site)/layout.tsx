@@ -36,12 +36,15 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             links={[
               ["/demo", "Request a demo"],
               ["/#trust", "Data & AI principles"],
+              ["/#team", "Team"],
+              ["/privacy", "Privacy"],
+              ["/terms", "Terms"],
             ]}
           />
         </div>
         <div className="border-t border-white/10">
           <p className="mx-auto max-w-7xl px-4 py-5 text-[12px] sm:px-6">
-            © {new Date().getFullYear()} ShelfRelay. All suppliers, products and prices shown on this site are fictional demonstration data.
+            © {new Date().getFullYear()} ShelfRelay · shelfrelay.site · Founded by Tolu Fashola (Founder/CEO) &amp; Emeka Nwosu (Co-founder/CTO). All suppliers, products and prices shown on this site are fictional demonstration data.
           </p>
         </div>
       </footer>
