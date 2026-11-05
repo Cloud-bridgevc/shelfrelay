@@ -42,8 +42,5 @@ yarn-error.log*
 next-env.d.ts
 .data/
 
-# cloudflare / opennext
-.open-next/
-.wrangler/
 .dev.vars
 
