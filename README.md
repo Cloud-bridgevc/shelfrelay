@@ -81,7 +81,7 @@ Then apply `db/schema.sql` to the Aurora cluster. The template creates a NAT gat
 - Ship assets: `opengraph-image.png`, `twitter-image.png`, `apple-icon.png`, `public/manifest.webmanifest`, icons, founders JSON-LD.
 
 ### Content to confirm before launch
-- **Founders are placeholders:** Tolu Fashola (Founder/CEO) and Emeka Nwosu (Co-founder/CTO) — replace in `web/src/components/Glow.tsx`, the footer in `web/src/app/(site)/layout.tsx` and the JSON-LD in `web/src/app/layout.tsx`.
+- **Founders:** Frank Idahor (Founder/CEO, confirmed) and Emeka Nwosu (Co-founder/CTO, still a placeholder) — edit in `web/src/components/Glow.tsx`, the footer in `web/src/app/(site)/layout.tsx` and the JSON-LD in `web/src/app/layout.tsx`.
 - Contact email `hello@shelfrelay.site` is a placeholder — create the forward or replace it.
 - Statistics (National Grocers Association economic impact study) — re-check figures and links.
 - Privacy notice and terms need operator details and governing law.
